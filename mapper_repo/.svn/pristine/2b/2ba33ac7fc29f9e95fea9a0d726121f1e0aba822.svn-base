@@ -1,0 +1,195 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
+using namespace std;
+#include "m3.h"
+#include "m2.h"
+#include "m1.h"
+#include "MapParser.h"
+#include <X11/keysym.h>
+#include <deque>
+#include <math.h>
+#include <boost/algorithm/string.hpp>
+#include <string>
+#include <vector>
+#include <utility> 
+#include <queue>
+#include <map>
+
+#define MAX 99999999
+///////////////////////////////////////////////////////////////
+///////////                                        ////////////
+///////////             Generate best Path         ////////////
+///////////                                        ////////////
+///////////////////////////////////////////////////////////////
+extern mapData mapInfo;
+
+double compute_path_travel_time(const std::vector<unsigned>& path, const double turn_penalty) {
+    return 0;
+}
+
+
+unsigned directly_connected_segment(unsigned intersection_id1, unsigned intersection_id2) {
+    unsigned limit1 = getIntersectionStreetSegmentCount(intersection_id1);
+    unsigned limit2 = getIntersectionStreetSegmentCount(intersection_id2);
+    if (intersection_id1 == intersection_id2)
+        return true;
+    for (unsigned i = 0; i < limit1; i++) {
+        for (unsigned j = 0; j < limit2; j++) {
+            unsigned ind = getIntersectionStreetSegment(intersection_id1, i);
+            if (ind == getIntersectionStreetSegment(intersection_id2, j))
+                return ind;
+        }
+    }
+
+    return -1;
+}
+
+class compare {
+public:
+
+    bool operator()(std::pair<int, int> a, std::pair<int, int> b) {
+        return a.second > b.second;
+    }
+};
+
+void dijkstra(int s, int d, std::map< int, std::vector< std::vector<int> > > myGraph, int nodes, std::vector<std::vector<int> > &seq, const int turn_penalty) {
+    int i, u, v, alt, *dist, *previous, *cost;
+    std::vector<int> myVec;
+    std::vector<int>::iterator vec_elem;
+    std::vector< std::vector<int> > prev;
+    std::vector< std::vector<int> >::iterator elem;
+    std::priority_queue< std::pair< int, int >, std::vector<std::pair<int, int> >, compare > priorQ;
+
+    dist = new int[nodes]; //distance
+    cost = new int[nodes]; //speed limit
+    previous = new int[nodes];
+
+    for (i = 0; i < nodes; i++) {
+        dist[i] = MAX; //setting all distances to infinity
+        previous[i] = -1;
+        cost[i] = 0;
+    }
+    //set source distance to 0
+    dist[s] = 0;
+    //add all vertices to priority queue
+    for (i = 0; i < nodes; i++) {
+        priorQ.push(make_pair(i, dist[i]));
+    }
+
+    while (!priorQ.empty()) {
+
+        //pick the top element
+        u = priorQ.top().first; //first node (intersection) in the priority queue
+        priorQ.pop();
+
+        if (dist[u] == MAX) { //path not found
+            break;
+        }
+
+        //if target found stop searching
+        if (u == d) {
+            break;
+        }
+
+        //main Dijkstra loop
+        for (elem = myGraph[u].begin(); elem != myGraph[u].end(); elem++) {
+            myVec = *elem;
+            v = myVec[0];
+            alt = dist[u] + myVec[1];
+
+            if (previous[u] != -1) {
+                unsigned prevSegID = directly_connected_segment(u, previous[u]);
+                unsigned nextSegID = directly_connected_segment(u, v);
+                if (mapInfo.street_segment_info[nextSegID].oneWay) {
+                    if (mapInfo.street_segment_info[nextSegID].from != u)
+                        alt += MAX;
+                }
+                prevSegID = mapInfo.street_segment_info[prevSegID].streetID;
+                nextSegID = mapInfo.street_segment_info[nextSegID].streetID;
+                //if street changes
+                if (nextSegID != prevSegID)
+                    alt += turn_penalty;
+            }
+
+
+            if (alt < dist[v]) {
+                dist[v] = alt;
+                previous[v] = u;
+                cost[v] = myVec[1];
+                priorQ.push(make_pair(v, dist[v]));
+            }
+        }
+    }
+
+    myVec.clear();
+    u = d;
+
+    //generate path sequence
+
+    while (previous[u] != -1) {
+        myVec.push_back(u);
+        myVec.push_back(cost[u]);
+        seq.push_back(myVec);
+        u = previous[u];
+        myVec.clear();
+    }
+    delete [] dist;
+    delete [] cost;
+    delete [] previous;
+
+}
+
+std::vector<unsigned> find_path_between_intersections(const unsigned intersect_id_start, const unsigned intersect_id_end, const double turn_penalty) {
+    std::vector< std::vector<int> > seq;
+
+    //Find shortest path between vertices e.g (1,4)
+    //seq (vector of vectors) describing sequence path in the form <"node","cost to node">
+
+    dijkstra(intersect_id_start, intersect_id_end, mapInfo.myAdj, mapInfo.interNum, seq, turn_penalty);
+    
+
+    bool first = true;
+    std::vector<unsigned> out;
+    std::vector< std::vector<int> >::iterator seqCount;
+    std::vector< std::vector<int> >::iterator oldSeqCount;
+
+    seqCount = seq.begin();
+
+    while (seqCount != seq.end()) {
+
+
+
+
+        if (!first) {
+            unsigned segID = directly_connected_segment((*seqCount)[0], (*oldSeqCount)[0]);
+            cout << segID << endl;
+            out.push_back(segID);
+            string dito = find_intersection_street_names((*seqCount)[0])[0];
+            dito += " and ";
+            dito += find_intersection_street_names((*seqCount)[0])[1];
+            //cout << dito << "\n";
+            cout << getStreetName(mapInfo.street_segment_info[segID].streetID) << endl;
+        }
+
+        oldSeqCount = seqCount;
+        seqCount++;
+        if (first) first = false;
+    }
+    
+    //for(unsigned i = 0; i < out.size(); i++){
+    //    
+    //    cout << getStreetName[mapInfo.street_segment_info[out[i]].streetID] << endl;
+    //}
+
+    return out;
+}
+
+std::vector<unsigned> find_path_to_point_of_interest(const unsigned intersect_id_start, const std::string point_of_interest_name, const double turn_penalty) {
+    std::vector<unsigned> y;
+    y.push_back(0);
+    return y;
+}

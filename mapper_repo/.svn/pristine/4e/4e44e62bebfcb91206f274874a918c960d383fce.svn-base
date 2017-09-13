@@ -1,0 +1,33 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
+/* 
+ * File:   m3.h
+ * Author: naserifa
+ *
+ * Created on March 12, 2017, 10:44 AM
+ */
+#pragma once //protects against multiple inclusions of this header file
+
+#include "m1.h"
+#include "m2.h"
+#include "graphics.h"
+#include "StreetsDatabaseAPI.h"
+#include <X11/keysym.h>
+#include <vector>
+#include <map>
+
+#ifndef M3_H
+#define M3_H
+
+unsigned directly_connected_segment(unsigned intersection_id1, unsigned intersection_id2);
+void dijkstra(int s,int d,std::map< int,std::vector< std::vector<int> > > myGraph,int nodes,std::vector<std::vector<int> > &seq);
+std::vector<unsigned> find_path_between_intersections();
+
+
+
+#endif /* M3_H */
+

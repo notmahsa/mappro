@@ -1,0 +1,191 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+#include "m3.h"
+#include "m2.h"
+#include "m1.h"
+#include "graphics.h"
+#include "StreetsDatabaseAPI.h"
+#include "OSMDatabaseAPI.h"
+#include "MapParser.h"
+#include <X11/keysym.h>
+#include <graphics.cpp>
+#include <deque>
+#include "Surface.h"
+#include <math.h>
+#include <boost/algorithm/string.hpp>
+#include <string>
+#include <vector>
+#include <map>
+
+#define MAX 9999999999999
+///////////////////////////////////////////////////////////////
+///////////                                        ////////////
+///////////             Generate best Path         ////////////
+///////////                                        ////////////
+///////////////////////////////////////////////////////////////
+mapData mapInfo;
+
+unsigned directly_connected_segment(unsigned intersection_id1, unsigned intersection_id2) {
+    unsigned limit1 = getIntersectionStreetSegmentCount(intersection_id1);
+    unsigned limit2 = getIntersectionStreetSegmentCount(intersection_id2);
+    if (intersection_id1 == intersection_id2)
+        return true;
+    for (unsigned i = 0; i < limit1; i++) {
+        for (unsigned j = 0; j < limit2; j++) {
+            unsigned ind = getIntersectionStreetSegment(intersection_id1, i);
+            if (ind == getIntersectionStreetSegment(intersection_id2, j))
+                return ind;
+        }
+    }
+
+    return -1;
+}
+
+class compare
+{
+public:
+    bool operator() (std::pair<int, int> a, std::pair<int, int> b)
+	    {
+		return a.second > b.second;
+	    }
+};
+    
+
+void dijkstra(int s,int d,std::map< int,std::vector< std::vector<int> > > myGraph,int nodes,std::vector<std::vector<int> > &seq)
+{
+    int i,u,v,alt,*dist,*previous,*cost;
+    std::vector<int> myVec;
+    std::vector<int>::iterator vec_elem;
+    std::vector< std::vector<int> > prev;
+    std::vector< std::vector<int> >::iterator elem;
+    std::priority_queue< std::pair< int,int >, std::vector<std::pair<int,int> >, compare > priorQ;
+
+    dist=new int[nodes]; //distance
+    cost=new int[nodes]; //speed limit
+    previous=new int[nodes];
+
+    for (i=0;i<nodes;i++){
+	dist[i]= MAX; //setting all distances to infinity
+	previous[i]=-1;
+	cost[i]=0;
+    }
+    //set source distance to 0
+    dist[s-1]=0;
+    std::cout<<"inside dijkstra\n";
+    //add all vertices to priority queue
+    for (i=0;i<nodes;i++){
+	priorQ.push(make_pair(i+1,dist[i]));
+    }
+    
+    while(!priorQ.empty()){
+	
+	//pick the top element
+	u = priorQ.top().first; //first node (intersection) in the priority queue
+	priorQ.pop();
+
+	if (dist[u-1]==MAX){ //path not found
+            break;
+	}
+
+	//if target found stop searching
+	if (u==d){
+	    break;
+	}
+
+	//main Dijkstra loop
+	for (elem=myGraph[u].begin();elem!=myGraph[u].end();elem++){
+	    myVec=*elem;
+	    v=myVec[0];
+	    alt=dist[u-1]+myVec[1];
+	    
+	    if (alt<dist[v-1]){
+		dist[v-1]=alt;
+		previous[v-1]=u-1;
+		cost[v-1]=myVec[1];
+		priorQ.push(make_pair(v,dist[v-1]));
+	    }
+	}
+    }
+    
+    myVec.clear();
+    u=d-1;
+    
+    //generate path sequence
+    
+    while (previous[u] != -1){
+	myVec.push_back(u+1);
+	myVec.push_back(cost[u]);
+	seq.push_back(myVec);
+	u=previous[u];
+	myVec.clear();
+    }
+    
+}
+
+
+std::vector<unsigned> find_path_between_intersections(){
+    //const unsigned iis,
+//const unsigned iie,
+//const double t_pen
+
+    // HOW TO CALL SIR DIJKSTRA!
+    int M;
+    int i;
+    int **graph;
+ 
+    std::vector< std::vector<int> > seq;
+    
+    std::vector< std::vector<int> >::iterator vec_elem,pos;
+    std::vector<int> myVec,odd;
+    std::map< int,std::vector< std::vector<int> > > myAdj,myMap;
+    std::map< int,std::vector< std::vector<int> > >::iterator map_elem;
+
+    //M = number of nodes
+    
+    M = mapInfo.interNum;
+    cout<<M;
+    graph=new int*[M];
+    for (i=0;i<M;i++){
+	graph[i]=new int[3];
+        graph[i][0] = i;
+        
+        std::vector<unsigned> adjacents = find_adjacent_intersections(i);
+        for (unsigned t = 0; t<adjacents.size();t++){
+            graph[i][1] = adjacents[t];
+            graph[i][2] = find_street_segment_travel_time(directly_connected_segment(i,adjacents[t]));
+            
+            if (graph[i][2] == -1)
+                continue;
+            myVec.push_back(graph[i][1]);
+            myVec.push_back(graph[i][2]);
+            myAdj[graph[i][0]].push_back(myVec);
+            myVec.clear();
+            myVec.push_back(graph[i][0]);
+            myVec.push_back(graph[i][2]);
+            myAdj[graph[i][1]].push_back(myVec);
+            myVec.clear();
+            
+        }
+        //graph[i][0] and graph[i][1] are the adjacent nodes
+        //graph[i][2] is the edge value (time to go through that segment)
+	
+    }
+    //Find shortest path between vertices e.g (1,4)
+    //seq (vector of vectors) describing sequence path in the form <"node","cost to node">
+    std::vector< std::vector<int> >::iterator seqCount;
+    
+    //FINCH AVE EAST & YONGE STREET TO COLLEGE STREET AND UNIVERSITY AVENUE
+    dijkstra(1342,12788,myAdj,M,seq);
+    
+    for (seqCount = seq.begin(); seqCount != seq.end(); seqCount++){
+        string dito = find_intersection_street_names((*seqCount)[0])[0];
+        dito += " and ";
+        dito += find_intersection_street_names((*seqCount)[0])[1];
+        cout<<dito<<std::endl;
+    }
+    std::vector<unsigned> vector1(10, 0);
+    return vector1;
+}

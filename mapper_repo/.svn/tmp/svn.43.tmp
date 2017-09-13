@@ -1,0 +1,433 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+#include "MapParser.h"
+#include "m3.h"
+#include "m2.h"
+#include "m1.h"
+#include <unordered_map>
+#include <unordered_set>
+#include <map>
+#include <boost/bind.hpp>
+#include <utility>
+
+struct sort_pred {
+
+    bool operator()(const std::pair<unsigned, double> &left, const std::pair<unsigned, double> &right) {
+        return left.second < right.second;
+    }
+};
+
+void mapData::store_osm_data() {
+
+    std::unordered_set<std::string> found_names;
+    for (unsigned i = 0; i < getNumberOfNodes(); i++) {
+        osm data;
+        // store the OSMWay info in an osm data struct       
+        const OSMNode* node = getNodeByIndex(i);
+        data.entity = node;
+        // get all the tags related to the current node and store them in a map (key, value)
+        std::unordered_map<std::string, std::string> node_tags;
+        for (unsigned j = 0; j < getTagCount(data.entity); j++) {
+            node_tags.insert(getTagPair(data.entity, j));
+        }
+
+        // look for subway stations
+        auto got = node_tags.find("railway");
+        if (got != node_tags.end()) {
+            if (got->second == "subway_entrance") {
+                auto name = node_tags.find("name");
+                if (name != node_tags.end() && name->second != "unknown") {
+                    auto found = found_names.find(name->second);
+                    if (found == found_names.end()) {
+                        found_names.insert(name->second);
+                        subway_names.push_back(name->second);
+                        LatLon location = node->coords();
+                        subway_stations.push_back(location);
+                    }
+                }
+            }
+        }
+
+
+        // store the related node tags in osm data struct 
+        data.tags = node_tags;
+        osm_entries.insert(std::make_pair(data.entity->id(), data));
+    }
+
+    for (unsigned i = 0; i < getNumberOfWays(); i++) {
+        osm data;
+        // store the OSMWay info in an osm data struct       
+        const OSMWay* way = getWayByIndex(i);
+        data.entity = way;
+
+        // get all the tags related to the current way and store them in a map (key, value)
+        std::unordered_map<std::string, std::string> way_tags;
+        for (unsigned j = 0; j < getTagCount(data.entity); j++) {
+            way_tags.insert(getTagPair(data.entity, j));
+        }
+
+        // store the related way tags in osm data struct 
+        data.tags = way_tags;
+        osm_entries.insert(std::make_pair(data.entity->id(), data));
+    }
+
+}
+
+void mapData::catagorize_data() {
+    streetNum = getNumberOfStreets();
+    segNum = getNumberOfStreetSegments();
+    POINum = getNumberOfPointsOfInterest();
+    interNum = getNumberOfIntersections();
+    featureNum = getNumberOfFeatures();
+    nodeNum = getNumberOfNodes();
+    wayNum = getNumberOfWays();
+
+    poi_name_drawn = false;
+    more_pois = false;
+    draw_pin = false;
+    draw_search_hover = false;
+    draw_directions_hover = false;
+    search_type = false;
+    directions = false;
+    start = false;
+    end = false;
+    action = false;
+    map = false;
+    path = false;
+    highlight_travel_path = false;
+    poi_travel_path = false;
+    help = false;
+    clickX = 0;
+    clickY = 0;
+    std::unordered_set<std::string> found_names;
+
+    street_id_to_intersections.resize(getNumberOfStreets());
+
+
+    /*******************************************/
+    /*         INTERSECTION VECTORS            */
+    /*******************************************/
+    for (unsigned intersection = 0; intersection < interNum; intersection++) {
+
+        intersection_position.push_back(getIntersectionPosition(intersection));
+
+        std::vector<unsigned> interIDs;
+        std::vector<unsigned> streetSegments;
+        for (unsigned i = 0; i < getIntersectionStreetSegmentCount(intersection); i++) {
+            auto const ss_id = getIntersectionStreetSegment(intersection, i);
+            streetSegments.push_back(ss_id);
+        }
+
+        intersection_street_segments.push_back(streetSegments);
+
+
+        // When the element is not found, std::find returns the end of the range
+        for (unsigned j = 0; j < intersection_street_segments[intersection].size(); j++) {
+            street_id_to_intersections[getStreetSegmentInfo(intersection_street_segments[intersection][j]).streetID].push_back(intersection);
+        }
+
+        // create an rTree for intersection position
+        // create a position point
+        LatLon pos = intersection_position[intersection];
+        point p(pos.lat(), pos.lon());
+        // insert the point to the tree
+        inter_tree.insert(std::make_pair(p, intersection));
+    }
+
+    /*******************************************/
+    /*         STREET SEGMENT VECTORS          */
+    /*******************************************/
+    street_segment_length.resize(segNum);
+    seg_travel_time.resize(segNum);
+
+    for (unsigned seg = 0; seg < segNum; seg++) {
+        StreetSegmentInfo segment = getStreetSegmentInfo(seg);
+        street_segment_info.push_back(segment);
+
+        std::vector<LatLon> points;
+        // add the starting intersection to the vector
+        points.push_back(intersection_position[segment.from]);
+
+        double length = 0;
+        LatLon curvePoint;
+
+        // add the lat/lon of any curve points in the segment to the back of the vector
+        if (segment.curvePointCount != 0) {
+            for (unsigned i = 0; i < segment.curvePointCount; i++) {
+                curvePoint = getStreetSegmentCurvePoint(seg, i);
+                points.push_back(curvePoint);
+            }
+        }
+        // add the ending intersection to the vector
+        points.push_back(intersection_position[segment.to]);
+
+        std::vector<double> dist;
+        double distance;
+        // sum the distance between each intersection/curve point
+        for (unsigned i = 0; i < points.size() - 1; i++) {
+            distance = find_distance_between_two_points(points[i], points[i + 1]);
+            dist.push_back(distance);
+            length += distance;
+        }
+
+        street_segment_length[seg] = length;
+        segment_curvepoint_length.push_back(dist);
+        seg_travel_time[seg] = length / (segment.speedLimit * 1000. / 3600);
+
+        if (std::find(street_to_street_segments[getStreetSegmentInfo(seg).streetID].begin(),
+                street_to_street_segments[getStreetSegmentInfo(seg).streetID].end(), seg) ==
+                street_to_street_segments[getStreetSegmentInfo(seg).streetID].end()) {
+            street_to_street_segments[getStreetSegmentInfo(seg).streetID].push_back(seg);
+        }
+
+        // catagorize if street segments are major, minor or highways
+        // get the open streetmap id for the current segment
+        OSMID id = segment.wayOSMID;
+
+        // find the data related to the id
+        osm data = osm_entries.find(id)->second;
+        std::unordered_map<std::string, std::string> roads = data.tags;
+
+        // search the tag keys to see if they are highways
+        auto got = roads.find("highway");
+
+        // if a highway is found, check what type of road it is using its value
+        if (got != roads.end()) {
+            // if the value is motorway, it is considered to be a major highway
+            if (got->second == "motorway") {
+                highways.push_back(seg);
+            } else if (got->second == "motorway_link") {
+                highway_ramps.push_back(seg);
+            }// if the value is residential, unclassified or service, store it as a sideroad
+            else if (got->second == "residential" || got->second == "unclassified" ||
+                    got->second == "service") {
+                minor_roads.push_back(seg);
+            }// if the segment has any other tag, store it as a major road
+            else {
+                major_roads.push_back(seg);
+            }
+        }
+    }
+
+    /*******************************************/
+    /*             STREET VECTORS              */
+    /*******************************************/
+    for (unsigned i = 0; i < streetNum; i++) {
+        std::string name = getStreetName(i);
+        if (std::find(NameToStreetID[name].begin(), NameToStreetID[name].end(), i)
+                == NameToStreetID[name].end())
+            NameToStreetID[name].push_back(i);
+
+
+        std::sort(street_id_to_intersections[i].begin(), street_id_to_intersections[i].end());
+        street_id_to_intersections[i].erase(std::unique(street_id_to_intersections[i].begin(), street_id_to_intersections[i].end()), street_id_to_intersections[i].end());
+    }
+
+
+    /*******************************************/
+    /*             FEATURE VECTORS             */
+    /*******************************************/
+    for (unsigned i = 0; i < featureNum; i++) {
+        featureInfo info;
+        info.index = i;
+        info.type = getFeatureType(i);
+        t_point temp;
+        for (unsigned j = 0; j < getFeaturePointCount(i); j++) {
+            temp = getXY(getFeaturePoint(i, j));
+            info.points.push_back(temp);
+        }
+
+        info.closed = is_closed(i);
+        info.area = poly_area(info.points);
+
+        switch (info.type) {
+            case 0:
+
+                info.colour = t_color(245, 245, 245);
+                break;
+            case 1:
+                info.colour = t_color(134, 235, 161);
+                break;
+            case 2:
+                info.colour = t_color(245, 237, 130);
+                break;
+            case 3:
+                info.colour = t_color(79, 182, 226);
+                break;
+            case 4:
+                info.colour = t_color(79, 182, 226);
+                break;
+            case 5:
+                info.colour = t_color(134, 156, 193);
+                break;
+            case 6:
+                info.colour = t_color(245, 245, 245);
+                break;
+            case 7:
+                info.colour = t_color(222, 198, 182);
+                buildings.push_back(i);
+                break;
+            case 8:
+                info.colour = t_color(95, 196, 95);
+                break;
+            case 9:
+                info.colour = t_color(0, 204, 102);
+                break;
+            case 10:
+                info.colour = t_color(79, 182, 226);
+                break;
+            default:
+                info.colour = t_color(255, 255, 255);
+                break;
+        }
+        if (info.type != 7) {
+            
+            features_by_area.push_back(std::make_pair(i, info.area));
+        }
+        open_features.push_back(info);
+        //        if (i == 0) {
+        //            features_by_area.push_back(info);
+        //        } else if (info.area != 0 && info.closed && info.type != 7) {
+        //            featureInfo end = features_by_area.back();
+        //            if (info.area <= end.area) {
+        //                features_by_area.push_back(info);
+        //            } else {
+        //                features_by_area.push_front(info);
+        //            }
+        //        } else if (info.area == 0 && info.closed && info.type != 7) {
+        //            zero_area_features.push_back(info);
+        //        } else if (info.type != 7) {
+        //            open_features.push_back(info);
+        //        }
+    }
+    std::sort(features_by_area.begin(), features_by_area.end(), sort_pred());
+    
+    std::reverse(features_by_area.begin(), features_by_area.end());
+
+
+
+    /*******************************************/
+    /*                 POI VECTORS             */
+    /*******************************************/
+
+    for (unsigned i = 0; i < POINum; i++) {
+
+        // create a position point
+        LatLon poi = getPointOfInterestPosition(i);
+        poi_position.push_back(poi);
+        point p(poi.lat(), poi.lon());
+        // insert the point to the tree
+        poi_tree.insert(std::make_pair(p, i));
+
+        std::string poiType = getPointOfInterestType(i);
+        std::string type = poiType;
+        std::string name = getPointOfInterestName(i);
+        name = boost::to_upper_copy<std::string>(name);
+        poi_name.push_back(name);
+
+        if (type == "school" || type == "university" || type == "college"
+                || type == "education" || type == "preschool"
+                || type == "kindergarten") {
+            schools.push_back(i);
+            poi_type.push_back(1);
+
+        } else if (type == "bank" || type == "atm") {
+            banks.push_back(i);
+            poi_type.push_back(2);
+        } else if (type == "restaurant") {
+            restaurants.push_back(i);
+            poi_type.push_back(3);
+        } else if (type == "cafe" || type == "internet_cafe") {
+            cafes.push_back(i);
+            poi_type.push_back(4);
+        } else if (type == "hospital") {
+            hospitals.push_back(i);
+            //std::cout << "found hospital" <<std::endl;
+            poi_type.push_back(5);
+        } else if (type == "hotel" || type == "motel") {
+            hotels.push_back(i);
+            //std::cout << "found hotel" <<std::endl;
+            poi_type.push_back(6);
+        } else {
+            other.push_back(i);
+            poi_type.push_back(7);
+        }
+
+    }
+
+    int M;
+    int i;
+    int **graph;
+    std::vector<int> myVec;
+    M = interNum;
+    graph=new int*[M];
+    for (i=0;i<M;i++){
+	graph[i]=new int[2];
+        graph[i][0] = i;
+        
+        std::vector<unsigned> adjacents = find_adjacent_intersections(i);
+        for (unsigned t = 0; t<adjacents.size();t++){
+            graph[i][1] = adjacents[t];
+            myVec.push_back(graph[i][1]);
+            myAdj[i].push_back(myVec);
+            myVec.clear();
+            myVec.push_back(i);
+            myAdj[graph[i][1]].push_back(myVec);
+            myVec.clear();
+            
+        }
+        //graph[i][0] and graph[i][1] are the adjacent nodes
+	delete [] graph[i];
+    }
+    delete [] graph;
+    
+}
+
+void mapData::clear_osm_data() {
+    osm_entries.clear();
+
+    // vectors to store the ids of different types of roads
+    highways.clear();
+    minor_roads.clear();
+    major_roads.clear();
+    bike_paths.clear();
+
+    // vectors to store ids of different types of buildings
+    schools.clear();
+    restaurants.clear();
+    banks.clear();
+    hospitals.clear();
+    hotels.clear();
+    cafes.clear();
+    other.clear();
+
+    // vectors to store the coordinates of public transit
+    subway_line.clear();
+    subway_stations.clear();
+    subway_names.clear();
+
+    street_segment_info.clear();
+    street_segment_length.clear();
+    intersection_position.clear();
+    intersection_street_segments.clear();
+    seg_travel_time.clear();
+    street_to_street_segments.clear();
+    street_id_to_intersections.clear();
+    NameToStreetID.clear();
+    poi_tree.clear();
+    inter_tree.clear();
+    buildings.clear();
+    features_by_area.clear();
+    zero_area_features.clear();
+    open_features.clear();
+    poi_position.clear();
+    poi_name.clear();
+    pathIDs.clear();
+    found_poi.clear();
+    highway_ramps.clear();
+
+    myAdj.clear();
+}

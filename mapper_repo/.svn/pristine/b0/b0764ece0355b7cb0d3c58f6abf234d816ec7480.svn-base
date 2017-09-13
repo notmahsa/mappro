@@ -1,0 +1,114 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
+/* 
+ * File:   OSMParser.h
+ * Author: roscoeol
+ *
+ * Created on February 16, 2017, 4:05 PM
+ */
+
+
+
+
+#ifndef OSMPARSER_H
+#define OSMPARSER_H
+
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <deque>
+#include "graphics.h"
+#include "StreetsDatabaseAPI.h"
+#include "OSMDatabaseAPI.h"
+#include <boost/geometry/index/rtree.hpp>
+#include <boost/geometry.hpp>
+#include <boost/geometry/geometries/point.hpp>
+#include <boost/geometry/geometries/box.hpp>
+
+namespace bg = boost::geometry;
+namespace bgi = boost::geometry::index;
+
+typedef bg::model::point<double, 2, bg::cs::cartesian> point;
+typedef bg::model::box<point> box;
+typedef std::pair<point, unsigned> value;
+
+struct featureInfo {
+    unsigned index;
+    unsigned type;
+    t_color colour;
+    double area;
+    bool closed;
+    std::vector<t_point> points;
+};
+
+struct osm {
+    const OSMEntity* entity;
+    std::unordered_map<std::string, std::string> tags;
+};
+
+class mapData {
+private:
+
+public:
+    unsigned streetNum, segNum, POINum, interNum, featureNum, nodeNum, wayNum;
+    bool poi_name_drawn, more_pois, draw_pin, draw_search_hover, draw_directions_hover, search_type, directions, start, end;
+    float clickX, clickY;
+    std::string  startLoc, endLoc;
+    std::vector<StreetSegmentInfo> street_segment_info;
+    std::vector<LatLon> intersection_position;
+    std::vector<double> street_segment_length;
+     std::vector<std::vector<double>> segment_curvepoint_length;
+    std::vector<std::vector<unsigned>> intersection_street_segments;
+    std::vector<double> seg_travel_time;
+    std::unordered_map<unsigned, std::vector<unsigned>>street_to_street_segments;
+    std::vector<std::vector<unsigned>> street_id_to_intersections;
+    std::unordered_map<std::string, std::vector<unsigned>>NameToStreetID;
+    bgi::rtree<value, bgi::quadratic < 16 >> poi_tree;
+    bgi::rtree<value, bgi::quadratic < 16 >> inter_tree;
+    std::vector<LatLon> poi_position;
+    std::vector<int> poi_type;
+
+    /*******************************************/
+    /*             FEATURE VECTORS             */
+    /*******************************************/
+    std::deque<featureInfo> features_by_area;
+    std::vector<featureInfo> zero_area_features;
+    std::vector<featureInfo> open_features;
+
+    std::vector<unsigned> buildings;
+    // store all OSMEntities with their OSMIDs and related tags   
+    std::unordered_map<OSMID, osm> osm_entries;
+
+    // vectors to store the ids of different types of roads
+    std::vector<unsigned> highways;
+    std::vector<unsigned> minor_roads;
+    std::vector<unsigned> major_roads;
+    std::vector<LatLon> bike_paths;
+
+    // vectors to store ids of different types of buildings
+    std::vector<unsigned> schools;
+    std::vector<unsigned> restaurants;
+    std::vector<unsigned> banks;
+    std::vector<unsigned> hospitals;
+    std::vector<unsigned> hotels;
+    std::vector<unsigned> cafes;
+    std::vector<unsigned> other;
+
+    // vectors to store the coordinates of public transit
+    std::vector<LatLon> subway_line;
+    std::vector<LatLon> subway_stations;
+    std::vector<std::string> subway_names;
+
+    void catagorize_data();
+    void store_osm_data();
+    void clear_osm_data();
+};
+
+
+
+#endif /* OSMPARSER_H */
+

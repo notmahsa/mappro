@@ -1,0 +1,77 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
+/* 
+ * File:   m2.h
+ * Author: team 053
+ *
+ * Created on February 13, 2017, 3:41 PM
+ */
+
+#include "m1.h"
+#include "graphics.h"
+#include "StreetsDatabaseAPI.h"
+#include <X11/keysym.h>
+
+#ifndef M2_H
+#define M2_H
+
+//struct featureInfo {
+//    unsigned index;
+//    unsigned type;
+//    t_color colour;
+//    double area;
+//    bool closed;
+//    std::vector<t_point> points;
+//};
+
+
+    void draw_map(void);
+    void drawscreen(void);
+    
+    void zoom0_draw();
+    void zoom1_draw();
+    void zoom2_draw();
+    void zoom3_draw();
+    void zoom4_draw();
+    void zoom5_draw();
+    void zoom6_draw();
+    void zoom7_draw();
+    void zoom8_draw();
+    void zoom9_draw();
+    void zoom10_draw();
+    
+    
+
+    std::vector<double> calcInitialCoordinates(bool xy);
+    t_point getXY(LatLon point);
+    LatLon getLatLon(float x, float y);
+    void draw_street_segment(unsigned segmentIndex, t_color color, int width);
+    void store_nodes();
+    void draw_icons(const char* path, LatLon point);
+    void draw_street_name(unsigned segment_id);
+    double find_text_angle(t_point start, t_point end);
+
+    bool is_closed(unsigned featureIndex);
+    void draw_features(unsigned featureIndex, t_color colour, bool closed);
+    double poly_area(std::vector<t_point> points);
+    void draw_poi(int amount);
+    void draw_arrow(float x1, float y1, float x2, float y2, bool twoway);
+    
+    void act_on_mousebutton(float x, float y, t_event_buttonPressed button_info);
+    void act_on_load_new_map(void (*drawscreen_ptr) (void));
+    void find(void (*drawscreen) (void));
+    void show_poi_names(void (*drawscreen_ptr) (void));
+    void more_poi_display(void (*drawscreen_ptr) (void));
+    
+    void highlight_feature(unsigned featureIndex);
+    void highlight_street(unsigned streetIndex);
+    void highlight_intersection(unsigned intersectionIndex);
+    void highlight_POI(unsigned POIindex);
+    std::vector<unsigned> find_path_between_intersections();
+
+#endif /* M2_H */
+

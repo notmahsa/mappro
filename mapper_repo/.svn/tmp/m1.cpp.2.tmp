@@ -1,0 +1,493 @@
+#include "m1.h"
+#include "m2.h"
+#include "StreetsDatabaseAPI.h"
+#include "OSMDatabaseAPI.h"
+#include "MapParser.h"
+#include "algorithm"
+#include <algorithm>
+#include <vector>
+#include <math.h>
+#include <string>
+#include <unordered_map>
+#include <deque>
+#include <iostream>
+#include <ctime>
+#include <boost/geometry/index/rtree.hpp>
+#include <boost/geometry.hpp>
+#include <boost/geometry/geometries/point.hpp>
+#include <boost/geometry/geometries/box.hpp>
+
+namespace bg = boost::geometry;
+namespace bgi = boost::geometry::index;
+
+typedef bg::model::point<double, 2, bg::cs::cartesian> point;
+typedef bg::model::box<point> box;
+typedef std::pair<point, unsigned> value;
+
+extern bool highlightIntersections;
+extern std::vector<double> coords;
+
+struct poiInfo {
+    LatLon position;
+    unsigned index;
+};
+
+double xyLength(t_point p1, t_point p2);
+
+
+/*******************************************/
+/*            VARIABLES TO DRAW            */
+/*******************************************/
+extern double lat_avg;
+int area_features_count;
+extern mapData mapInfo;
+
+/*******************************************/
+/*             LOAD MAP                    */
+
+/*******************************************/
+
+bool load_map(std::string map_path) {
+    std::string path = map_path;
+    std::string s = ".streets.bin";
+
+    std::string::size_type streetFind = path.find(s);
+    if (streetFind != std::string::npos) {
+        path.erase(streetFind, s.length());
+    }
+
+
+    bool loadedMap = loadStreetsDatabaseBIN(path + ".streets.bin");
+    bool loadedOSM = false;
+    //Load your map related data structures here
+
+    if (loadedMap) {
+        loadedOSM = loadOSMDatabaseBIN(path + ".osm.bin");
+        mapInfo.store_osm_data();
+        mapInfo.catagorize_data();
+    } else {
+        update_message("Error: map path not found. Loading default map");
+        highlightIntersections = false;
+        std::string mapPath, s, o, standard, city;
+
+        mapPath = "/cad2/ece297s/public/maps/toronto_canada.streets.bin";
+        bool loaded = false;
+
+        // close the current map
+        //close_map();
+
+        // load a new map and set the value of loaded
+        loaded = load_map(mapPath);
+
+        // if the new map was successfully loaded, fill in the necessary info
+        if (loaded) {
+
+            // find new display coordinates
+            
+            coords = calcInitialCoordinates(true);
+            set_visible_world(coords[0], coords[1], coords[2], coords[3]);
+
+            // draw the new map
+            drawscreen();
+
+            // update the map message bar to say which map was loaded
+            update_message(city + " was loaded");
+        }
+
+    }
+
+    return loadedMap&&loadedOSM;
+
+}
+
+/*******************************************/
+/*             CLOSE MAP                   */
+
+/*******************************************/
+
+void close_map() {
+    //Clean-up your map related data structures here
+    mapInfo.clear_osm_data();
+
+    closeOSMDatabase();
+    closeStreetDatabase();
+}
+
+/*******************************************/
+/*     FIND STREET IDS FROM NAME           */
+/*******************************************/
+
+//Returns street id(s) for the given street name
+//If no street with this name exists, returns a 0-length vector.
+
+std::vector<unsigned> find_street_ids_from_name(std::string street_name) {
+
+    return mapInfo.NameToStreetID[street_name];
+
+}
+
+/*******************************************/
+/*   FIND INTERSECTION STREET SEGMENTS     */
+/*******************************************/
+
+//Returns the street segments for the given intersection 
+
+std::vector<unsigned> find_intersection_street_segments(unsigned intersection_id) {
+    return mapInfo.intersection_street_segments[intersection_id];
+}
+
+/*******************************************/
+/*     FIND INTERSECTION STREET NAMES      */
+/*******************************************/
+
+// Returns the street names at the given intersection (includes duplicate street names in returned vector)
+
+std::vector<std::string> find_intersection_street_names(unsigned intersection_id) {
+
+    // get the vector that contains the IDs of all the street segments connected to the intersection
+    std::vector<unsigned> streetSegments = find_intersection_street_segments(intersection_id);
+
+    // create a vector to hold all the street names connected to the ID
+    std::vector<std::string> interStreetNames;
+
+    // create a StreetSegmentInfo struct to temporarily hold the info about the street segment
+    StreetSegmentInfo info;
+    std::string name;
+
+    // add the street names that correspond with the segment to the vector
+    for (unsigned i = 0; i < streetSegments.size(); i++) {
+
+        // get information about the street segment connected to the intersection
+        info = mapInfo.street_segment_info[streetSegments[i]];
+
+        // find the name of the street through the streetID of the segment
+        name = getStreetName(info.streetID);
+
+        // add the streetName to the vector
+        interStreetNames.push_back(name);
+    }
+
+    return interStreetNames;
+}
+
+/*******************************************/
+/*     FIND DISTANCE BETWEEN TWO POINTS    */
+/*******************************************/
+
+//Returns the distance between two coordinates in meters
+
+double find_distance_between_two_points(LatLon point1, LatLon point2) {
+    double x1, x2, y1, y2;
+
+    double latAvg = (point2.lat() + point1.lat()) / 2;
+
+    x1 = point1.lon() * DEG_TO_RAD * cos(latAvg * DEG_TO_RAD);
+    x2 = point2.lon() * DEG_TO_RAD * cos(latAvg * DEG_TO_RAD);
+
+    y1 = point1.lat() * DEG_TO_RAD;
+    y2 = point2.lat() * DEG_TO_RAD;
+
+    return EARTH_RADIUS_IN_METERS * sqrt(pow((y2 - y1), 2) + pow((x2 - x1), 2));
+}
+
+/*******************************************/
+/*     FIND STREET SEGMENT LENGTH          */
+/*******************************************/
+
+//Returns the length of the given street segment in meters
+
+double find_street_segment_length(unsigned street_segment_id) {
+
+    return mapInfo.street_segment_length[street_segment_id];
+}
+
+/*******************************************/
+/*     FIND STREET SEG TRAVEL TIME         */
+/*******************************************/
+
+//Returns the travel time to drive a street segment in seconds (time = distance/speed_limit)
+
+double find_street_segment_travel_time(unsigned street_segment_id) {
+    return mapInfo.seg_travel_time[street_segment_id];
+}
+
+/*******************************************/
+/*       ARE DIRECTLY CONNECTED            */
+/*******************************************/
+
+//Returns true if you can get from intersection1 to intersection2 using a single street segment (hint: check for 1-way streets too)
+//corner case: an intersection is considered to be connected to itself
+
+bool are_directly_connected(unsigned intersection_id1, unsigned intersection_id2) {
+    unsigned limit1 = getIntersectionStreetSegmentCount(intersection_id1);
+    unsigned limit2 = getIntersectionStreetSegmentCount(intersection_id2);
+    if (intersection_id1 == intersection_id2)
+        return true;
+    for (unsigned i = 0; i < limit1; i++) {
+        for (unsigned j = 0; j < limit2; j++) {
+            if (getIntersectionStreetSegment(intersection_id1, i) == getIntersectionStreetSegment(intersection_id2, j))
+                return true;
+        }
+    }
+
+    return false;
+}
+
+
+/*******************************************/
+/*       FIND ADJACENT INTERSECTIONS       */
+/*******************************************/
+
+//Returns all intersections reachable by traveling down one street segment 
+//from given intersection (hint: you can't travel the wrong way on a 1-way street)
+//the returned vector should NOT contain duplicate intersections
+
+std::vector<unsigned> find_adjacent_intersections(unsigned intersection_id) {
+
+    std::vector<unsigned> adjacent_intersections;
+    unsigned street_segment_count_from_id = getIntersectionStreetSegmentCount(intersection_id);
+
+    for (unsigned i = 0; i < street_segment_count_from_id; i++) {
+        unsigned street_segment_id = getIntersectionStreetSegment(intersection_id, i);
+
+        if (getStreetSegmentInfo(street_segment_id).from == intersection_id) {
+            if (!(std::find(adjacent_intersections.begin(), adjacent_intersections.end(), getStreetSegmentInfo(street_segment_id).to) !=
+                    adjacent_intersections.end()))
+                adjacent_intersections.push_back(getStreetSegmentInfo(street_segment_id).to);
+        } else if (getStreetSegmentInfo(street_segment_id).to == intersection_id&& !getStreetSegmentInfo(street_segment_id).oneWay) {
+            if (!(std::find(adjacent_intersections.begin(), adjacent_intersections.end(), getStreetSegmentInfo(street_segment_id).from) !=
+                    adjacent_intersections.end()))
+
+                adjacent_intersections.push_back(getStreetSegmentInfo(street_segment_id).from);
+        }
+    }
+
+    return adjacent_intersections;
+}
+
+/*******************************************/
+/*     FIND STREET STREET SEGMENTS         */
+/*******************************************/
+
+//Returns all street segments for the given street
+
+std::vector<unsigned> find_street_street_segments(unsigned street_id) {
+
+    return mapInfo.street_to_street_segments[street_id];
+    //std::vector<unsigned> street;
+    //return street;
+}
+
+/*******************************************/
+/*   FIND ALL STREET INTERSECTIONS         */
+/*******************************************/
+
+//Returns all intersections along the a given street
+
+std::vector<unsigned> find_all_street_intersections(unsigned street_id) {
+
+    return mapInfo.street_id_to_intersections[street_id];
+}
+
+/*******************************************/
+/* FIND INTERSECTION IDS FROM STREET NAMES */
+/*******************************************/
+
+//Return all intersection ids for two intersecting streets
+//This function will typically return one intersection id.
+//However street names are not guarenteed to be unique, so more than 1 intersection id may exist
+
+std::vector<unsigned> find_intersection_ids_from_street_names(std::string street_name1, std::string street_name2) {
+
+    std::vector<unsigned> intersectionIDs;
+
+    std::vector<unsigned> street1IDs = mapInfo.NameToStreetID[street_name1];
+    std::vector<unsigned> street2IDs = mapInfo.NameToStreetID[street_name2];
+    std::vector<unsigned> street1Ints;
+    std::vector<unsigned> street2Ints;
+    unsigned pointerTo1;
+    unsigned pointerTo2;
+    unsigned currInt1;
+    unsigned currInt2;
+    unsigned currStreet1;
+    unsigned currStreet2;
+
+
+    for (unsigned street1 = 0; street1 < street1IDs.size(); street1++) {
+        for (unsigned street2 = 0; street2 < street2IDs.size(); street2++) {
+            pointerTo1 = 0;
+            pointerTo2 = 0;
+            currStreet1 = street1IDs[street1];
+            currStreet2 = street2IDs[street2];
+            street1Ints = find_all_street_intersections(currStreet1);
+            street2Ints = find_all_street_intersections(currStreet2);
+
+
+            while (pointerTo1 < street1Ints.size() && pointerTo2 < street2Ints.size()) {
+                currInt1 = street1Ints[pointerTo1];
+                currInt2 = street2Ints[pointerTo2];
+                if (currInt1 > currInt2) {
+                    pointerTo2++;
+                } else if (currInt1 < currInt2) {
+                    pointerTo1++;
+                } else if (currInt1 == currInt2) {
+                    intersectionIDs.push_back(currInt1);
+                    pointerTo1++;
+                    pointerTo2++;
+                }
+
+            }
+        }
+    }
+
+    return intersectionIDs;
+}
+
+/*******************************************/
+/*           FIND STREET LENGTH            */
+/*******************************************/
+
+//Returns the length of the specified street in meters
+
+double find_street_length(unsigned street_id) {
+
+    double length = 0;
+
+    std::vector<unsigned> street_segment_IDs = find_street_street_segments(street_id);
+
+    unsigned size = street_segment_IDs.size();
+    for (unsigned i = 0; i < size; i++) {
+
+        length += find_street_segment_length(street_segment_IDs[i]);
+    }
+    return length;
+
+
+}
+
+/*******************************************/
+/*           FIND CLOSEST POI              */
+/*******************************************/
+
+//Returns the nearest point of interest to the given position
+
+unsigned find_closest_point_of_interest(LatLon my_position) {
+    unsigned closestPoint;
+
+    // search for nearest neighbours
+    std::vector<value> result_n;
+    // define the position you want to find a neighbor to
+    point sought = point(my_position.lat(), my_position.lon());
+    // search the tree for the 5 nearest neighbors to your position
+    mapInfo.poi_tree.query(bgi::nearest(sought, 50), std::back_inserter(result_n));
+
+    // declare the first ID from the results as the closest point
+    closestPoint = result_n[0].second;
+    // find the distance to the first point in the vector
+    double closest = find_distance_between_two_points(my_position, getPointOfInterestPosition(result_n[0].second));
+    // check the other 4 points to see if they are closer
+    for (unsigned i = 1; i < result_n.size(); i++) {
+        double length = find_distance_between_two_points(my_position, getPointOfInterestPosition(result_n[i].second));
+        if (length < closest) {
+            closest = length;
+            closestPoint = result_n[i].second;
+        }
+    }
+    //    unsigned closestPoint;
+    //
+    //    // search for nearest neighbours
+    //    std::vector<value> result_n;
+    //    // define the position you want to find a neighbor to
+    //    point sought = point(getXY(my_position).x, getXY(my_position).y);
+    //    // search the tree for the 50 nearest neighbors to your position
+    //    poi_tree.query(bgi::nearest(sought, 50), std::back_inserter(result_n));
+    //
+    //    // declare the first ID from the results as the closest point
+    //    closestPoint = result_n[0].second;
+    //
+    //    double closest = xyLength(t_point(getXY(my_position).x, getXY(my_position).y),
+    //            t_point(getXY(getPointOfInterestPosition(result_n[0].second)).x, getXY(getPointOfInterestPosition(result_n[0].second)).y));
+    //    // check the other 4 points to see if they are closer
+    //    for (unsigned i = 1; i < result_n.size(); i++) {
+    //        t_point compare;
+    //        compare.x = getXY(getPointOfInterestPosition(result_n[i].second)).x;
+    //        compare.y = getXY(getPointOfInterestPosition(result_n[i].second)).y;
+    //        double length = xyLength(t_point(getXY(my_position).x, getXY(my_position).y), compare);
+    //        if (length < closest) {
+    //            closest = length;
+    //            closestPoint = result_n[i].second;
+    //        }
+    //    }
+
+    //return the closest point
+    return closestPoint;
+}
+
+/*******************************************/
+/*     FIND CLOSEST INTERSECTION           */
+/*******************************************/
+
+//Returns the the nearest intersection to the given position
+
+unsigned find_closest_intersection(LatLon my_position) {
+    unsigned closestIntersection;
+
+    // search for nearest neighbours
+    std::vector<value> result_n;
+    // define the position you want to find a neighbor to
+    point sought = point(my_position.lat(), my_position.lon());
+    // search the tree for the 5 nearest neighbors to your position
+    mapInfo.inter_tree.query(bgi::nearest(sought, 50), std::back_inserter(result_n));
+
+    // declare the first ID from the results as the closest point
+    closestIntersection = result_n[0].second;
+    // find the distance to the first point in the vector
+    double closest = find_distance_between_two_points(my_position, getIntersectionPosition(result_n[0].second));
+    // check the other 4 points to see if they are closer
+    for (unsigned i = 1; i < result_n.size(); i++) {
+        double length = find_distance_between_two_points(my_position, getIntersectionPosition(result_n[i].second));
+        if (length < closest) {
+            closest = length;
+            closestIntersection = result_n[i].second;
+        }
+    }
+
+
+    //    unsigned closestIntersection;
+    //
+    //    // search for nearest neighbours
+    //    std::vector<value> result_n;
+    //    // define the position you want to find a neighbor to
+    //    point sought = point(getXY(my_position).x, getXY(my_position).y);
+    //    // search the tree for the 10 nearest neighbors to your position
+    //    inter_tree.query(bgi::nearest(sought, 50), std::back_inserter(result_n));
+    //
+    //    // declare the first ID from the results as the closest point
+    //    closestIntersection = result_n[0].second;
+    //    // find the distance to the first point in the vector
+    //    double closest = xyLength(t_point(getXY(my_position).x, getXY(my_position).y),
+    //            t_point(getXY(getIntersectionPosition(result_n[0].second)).x, getXY(getIntersectionPosition(result_n[0].second)).y));
+    //    // check the other 4 points to see if they are closer
+    //    for (unsigned i = 1; i < result_n.size(); i++) {
+    //        t_point compare;
+    //        compare.x = getXY(getIntersectionPosition(result_n[i].second)).x;
+    //        compare.y = getXY(getIntersectionPosition(result_n[i].second)).y;
+    //        double length = xyLength(t_point(getXY(my_position).x, getXY(my_position).y), compare);
+    //        if (length < closest) {
+    //            closest = length;
+    //            closestIntersection = result_n[i].second;
+    //        }
+    //    }
+
+
+    return closestIntersection;
+}
+
+double xyLength(t_point p1, t_point p2) {
+    double length = sqrt(pow((p2.y - p1.y), 2) + pow((p2.x - p1.x), 2));
+    return length;
+}
+<<<<<<< .mine
+
+=======
+>>>>>>> .r55

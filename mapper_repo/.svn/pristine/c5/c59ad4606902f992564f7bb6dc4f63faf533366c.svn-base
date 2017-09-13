@@ -1,0 +1,24 @@
+/* 
+ * File:   m3.h
+ * Author: naserifa
+ *
+ * Created on March 12, 2017, 10:44 AM
+ */
+#pragma once //protects against multiple inclusions of this header file
+
+#include <vector>
+#include <map>
+#include <string>
+#include <utility>
+
+#ifndef M3_H
+#define M3_H
+double compute_path_travel_time(const std::vector<unsigned>& path, const double turn_penalty);
+std::vector<unsigned> find_path_to_point_of_interest(const unsigned intersect_id_start, const std::string point_of_interest_name,const double turn_penalty);
+unsigned directly_connected_segment(unsigned intersection_id1, unsigned intersection_id2);
+void dijkstra(int s,int d,std::map< int,std::vector< std::vector<int> > > myGraph,int nodes,std::vector<std::vector<int> > &seq, const int turn_penalty);
+std::vector<unsigned> find_path_between_intersections(const unsigned intersect_id_start, const unsigned intersect_id_end, const double turn_penalty);
+std::vector<unsigned> find_path_to_point_of_interest(const unsigned intersect_id_start,const std::string point_of_interest_name,const double turn_penalty);
+
+#endif /* M3_H */
+

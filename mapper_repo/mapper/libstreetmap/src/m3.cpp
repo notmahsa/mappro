@@ -1,0 +1,669 @@
+/*
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+ */
+
+using namespace std;
+#include "MapParser.h"
+#include "m1.h"
+#include "m2.h"
+#include "m3.h"
+#include "StreetsDatabaseAPI.h"
+#include "OSMDatabaseAPI.h"
+#include "graphics.h"
+#include <iostream>
+#include <sstream>
+#include <math.h>
+#include <cstring>
+#include <vector>
+#include <unordered_map>
+#include <algorithm>
+#include <chrono>
+#include <thread>
+#include <cstdlib>
+#include <string>
+#include <cmath>
+#include <queue>
+#include "LatLon.h"
+#include "features.h"
+#define INF 0x3f3f3f3f
+#define BUTTON_NUM 19
+
+
+
+using namespace std;
+
+typedef pair<double, unsigned> pairDU; //a pair of a double and unsigned
+
+struct bigger {
+
+    bool operator()(const pairDU &a, const pairDU &b) {
+        return a.first > b.first;
+    }
+};
+
+struct Node {
+
+    Node(double _weight, unsigned _intersectionID) {
+        weight = _weight;
+        intersectionID = _intersectionID;
+    }
+    double weight;
+    unsigned intersectionID;
+
+    bool operator()(const Node &a, const Node &b) {
+        return a.weight > b.weight;
+    }
+};
+
+struct Node_compare {
+
+    bool operator()(const Node &a, const Node &b) {
+        return a.weight > b.weight;
+    }
+};
+
+///////////////////////////////////////////////////////////////
+///////////                                        ////////////
+///////////             Generate best Path         ////////////
+///////////                                        ////////////
+///////////////////////////////////////////////////////////////
+extern mapData mapInfo;
+extern std::vector<std::string> directions_to_print;
+
+
+/*******************************************/
+/*            STORE DIRECTIONS            */
+/*******************************************/
+// store the directions in a vector to print to console, also print to terminal in case there are too many directions
+
+void le_directions(const std::vector<unsigned>& path) {
+    // clear old directions
+    directions_to_print.clear();
+    unsigned limit1 = path.size();
+    unsigned old = path[0];
+    //cout<<endl<<"Continue straight on "<<getStreetName(mapInfo.street_segment_info[old].streetID)<<endl;
+    double meterage = mapInfo.street_segment_length[old];
+    std::string newDir;
+
+
+    cout << "**********DIRECTIONS**********" << endl << endl;
+    newDir = "**********DIRECTIONS**********";
+    directions_to_print.push_back(newDir);
+
+    // set starting travel
+    cout << endl << "Travel straight on " << getStreetName(mapInfo.street_segment_info[old].streetID) << endl;
+    newDir = "Travel straight on " + getStreetName(mapInfo.street_segment_info[old].streetID);
+    directions_to_print.push_back(newDir);
+
+    // count the length traveled on a single road
+    unsigned i = 0;
+
+    // iterate through the path
+    while (i < limit1) {
+        // if the new segment is part of the same street as the old segment, add the length to the total meterage
+        if (mapInfo.street_segment_info[path[i]].streetID == mapInfo.street_segment_info[old].streetID) {
+            meterage += mapInfo.street_segment_length[path[i]];
+
+        }
+
+            if (mapInfo.street_segment_info[i].streetID == mapInfo.street_segment_info[old].streetID) {
+                meterage += mapInfo.street_segment_length[path[i]];
+
+            }
+
+            // if the new and old segments are from different streets
+            if (getStreetName(mapInfo.street_segment_info[path[i]].streetID) != getStreetName(mapInfo.street_segment_info[old].streetID)) {
+                //print length of previous segment
+                cout << "Continue for " << meterage << " meters" << endl;
+                newDir = "Continue for " + to_string(meterage) + " meters";
+                directions_to_print.push_back(newDir);
+
+                //clear meterage
+                meterage = 0;
+
+                //make t points for the cross product
+                t_point begin1 = getXY(getIntersectionPosition(mapInfo.street_segment_info[old].from));
+                t_point end1 = getXY(getIntersectionPosition(mapInfo.street_segment_info[old].to));
+                t_point begin2 = getXY(getIntersectionPosition(mapInfo.street_segment_info[path[i]].from));
+                t_point end2 = getXY(getIntersectionPosition(mapInfo.street_segment_info[path[i]].to));
+
+                old = path[i];
+
+                //use cross product to check if the path goes right or left
+                if (positive_cross_product(begin1.x - end1.x, begin1.y - end1.y, begin2.x - end2.x, begin2.y - end2.y)) {//turn left
+
+                    cout << "Turn left onto " << getStreetName(mapInfo.street_segment_info[old].streetID) << endl;
+                    newDir = "Turn left onto " + getStreetName(mapInfo.street_segment_info[old].streetID);
+                    directions_to_print.push_back(newDir);
+                } else {
+                    cout << "Turn right onto " << getStreetName(mapInfo.street_segment_info[old].streetID) << endl;
+                    newDir = "Turn right onto " + getStreetName(mapInfo.street_segment_info[old].streetID);
+                    directions_to_print.push_back(newDir);
+                }
+                meterage += mapInfo.street_segment_length[path[i]];
+            }
+            
+            i++;
+        
+    }
+    // print out last few directions
+    newDir = "Continue for " + to_string(meterage) + " meters";
+    directions_to_print.push_back(newDir);
+    cout << "You have reached your destination!" << endl;
+    newDir = "You have reached your destination!";
+    directions_to_print.push_back(newDir);
+}
+
+
+/*******************************************/
+/*           CROSS PRODUCT                 */
+
+/*******************************************/
+bool positive_cross_product(double x1, double y1, double x2, double y2) {
+    double xProd = x1 * y2 - y1 * x2;
+    return xProd >= 0;
+}
+
+bool zero_cross_product(double x1, double y1, double x2, double y2) {
+    int xProd = abs(x1 * y2 - y1 * x2);
+    return xProd == 0;
+}
+
+vector <unsigned> find_street_segments(unsigned intersection1, unsigned intersection2) {
+    //Need to return the street segment connecting the two intersections
+    vector<unsigned> street_segments1 = find_intersection_street_segments(intersection1);
+    vector<unsigned> street_segments2 = find_intersection_street_segments(intersection2);
+    vector <unsigned> shared_street_segments;
+
+    //sort(street_segments1.begin(), street_segments1.end());
+    //sort(street_segments2.begin(), street_segments2.end());
+
+    set_intersection(street_segments1.begin(), street_segments1.end(),
+            street_segments2.begin(), street_segments2.end(), back_inserter(shared_street_segments));
+
+    return shared_street_segments; //if no match was found
+}
+ 
+unsigned find_fastest_street_segment(const vector<unsigned>& shared_street_segments, unsigned intersection1) {
+
+    double min_time = INF;
+    unsigned fastest_street_segment = shared_street_segments[0]; //shared_street_segments[0];
+    unsigned segment;
+    double temp_time;
+    unsigned segSize = shared_street_segments.size();
+    if (segSize == 1) return shared_street_segments[0];
+    
+    for (unsigned i = 0; i < segSize; i++) {
+        segment = shared_street_segments[i];
+        temp_time = find_street_segment_travel_time(segment);
+        if (temp_time < min_time){
+            if (!mapInfo.street_segment_info[segment].oneWay || 
+                    mapInfo.street_segment_info[segment].from == intersection1) {
+                min_time = temp_time;
+                fastest_street_segment = segment;
+            }
+        }
+    }
+    return fastest_street_segment;
+}
+
+double heuristic_cost_estimate(unsigned intersection, unsigned intersect_id_end) {
+    //Calculate the euclidean distance
+    LatLon point1 = getIntersectionPosition(intersection);
+    LatLon point2 = getIntersectionPosition(intersect_id_end);
+
+    //double speed = 41.6; //magic number that is greater than the highest speed limit
+    double distance = find_distance_between_two_points(point1, point2); //in meters
+    //double time = (distance / speed); //taking into account the conversion factor, in seconds
+    return distance / 41.6;
+
+}
+
+vector <unsigned> intersection_to_street_seg(vector<unsigned>& intersection_path, double last_intersection) {
+    //now we want to make a vector of street segments out of the vector of intersections
+    vector <unsigned> street_segment_path;
+    vector <unsigned> street_segments;
+    bool reached_end = false;
+    unsigned fastest_segment;
+    int segSize = intersection_path.size() - 1;
+    
+    //first we need to reverse the vector of intersections
+    if(segSize > 0)
+        reverse(intersection_path.begin(), intersection_path.end());
+    
+    for (int i = 0; i < segSize; i++) {
+        if (reached_end == true)
+            return street_segment_path;
+        street_segments = find_street_segments(intersection_path[i], intersection_path[i + 1]);
+        //unsigned segment = find_street_segments(intersection_path[i], intersection_path[i+1]);
+        fastest_segment = find_fastest_street_segment(street_segments, intersection_path[i]); //IN THE CORRECT DIRECTION
+        street_segment_path.push_back(fastest_segment);
+        if (intersection_path[i] == last_intersection)
+            reached_end = true;
+    }
+    return street_segment_path;
+}
+
+vector <unsigned> reconstruct_path(vector<unsigned>& cameFrom, unsigned current, unsigned intersect_id_start) {
+    vector <unsigned> intersection_path;
+    intersection_path.push_back(current);
+    unsigned last_intersection = current; //this is because we have reached our destination
+
+    while (cameFrom[current] != intersect_id_start) {
+        current = cameFrom[current];
+        intersection_path.emplace_back(current);
+    }
+
+    intersection_path.push_back(intersect_id_start);
+    vector <unsigned> street_segment_path = intersection_to_street_seg(intersection_path, last_intersection);
+    return street_segment_path;
+}
+
+ /*bool found_POI(unsigned current, string POI_name) {
+
+    vector <unsigned> POI_IDS = mapInfo.POI_name_to_IDs[POI_name];
+    bool found = false;
+    unsigned closest_intersection, poiID;
+    for (unsigned i = 0; i < POI_IDS.size(); i++) {
+        poiID = POI_IDS[i];
+        //closest_intersection = find_closest_intersection(mapInfo.poi_position[poiID]);
+        closest_intersection = mapInfo.POIID_to_intersectionID[poiID];
+        if (current == closest_intersection)
+            found = true;
+    }
+    return found;
+}*/
+
+
+
+
+/*******************************************/
+/*          FIND POIs FROM NAME            */
+
+/*******************************************/
+std::vector<unsigned> find_pois_from_name(std::string name) {
+    std::vector<unsigned> foundPOIs;
+    name = boost::to_upper_copy<std::string>(name);
+
+    // using std::find with vector and iterator:
+    std::vector<int>::iterator it;
+
+    // check if the current name is the one we're looking for
+    for (unsigned i = 0; i < mapInfo.poi_name.size(); i++) {
+        std::string currName = mapInfo.poi_name[i];
+        std::size_t found = currName.find(name);
+        if (found != std::string::npos)
+            foundPOIs.push_back(i);
+    }
+    return foundPOIs;
+}
+
+
+
+
+
+
+double compute_path_travel_time(const vector<unsigned>& path, const double turn_penalty) {
+
+
+    double total_travel_time = 0,segment_travel_time;
+
+    if (path.size() == 0)
+        return 0.0;
+    unsigned streetID1, streetID2 ;
+    
+    for (unsigned i = 0; i < path.size() - 1; i++) {
+
+        //check if a turn penalty needs to be added
+        streetID1 = mapInfo.street_segment_info[path[i]].streetID;
+        streetID2 = mapInfo.street_segment_info[path[i + 1]].streetID;
+
+        segment_travel_time = find_street_segment_travel_time(path[i]);
+
+        if (streetID1 != streetID2)
+            total_travel_time += turn_penalty;
+
+        total_travel_time += segment_travel_time;
+    }
+
+    //unsigned street_seglast = path [path.size() - 1]; //last segment id in the vector
+
+    total_travel_time += find_street_segment_travel_time(path [path.size() - 1]);
+    return total_travel_time;
+}
+
+vector<unsigned> find_path_between_intersections(const unsigned intersect_id_start,
+        const unsigned intersect_id_end,
+        const double turn_penalty) {
+
+    priority_queue< Node, vector<Node>, Node_compare > openSet;
+
+    vector <double> gScore(mapInfo.interNum, INF);
+    vector <unsigned> cameFrom;
+    cameFrom.resize(mapInfo.interNum);
+    vector <double> fScore(mapInfo.interNum, INF);
+
+    gScore[intersect_id_start] = 0;
+    fScore[intersect_id_start] = heuristic_cost_estimate(intersect_id_start, intersect_id_end);
+    openSet.push( Node(0, intersect_id_start));
+
+    unsigned current, neighbor, fastest_street_segmentID, prev_intersection,
+            prev_street_segment, streetID1;
+    vector <unsigned> shared_street_segments, neighbors, previous_street_segments, empty_vector;
+    double tentative_gScore;
+
+    while (!openSet.empty()) {
+        current = openSet.top().intersectionID;
+        if (current == intersect_id_end)
+            return reconstruct_path(cameFrom, current, intersect_id_start);
+
+        openSet.pop();
+        
+        neighbors = find_adjacent_intersections(current);
+        for (unsigned i = 0; i < neighbors.size(); i++) {
+            
+            neighbor = neighbors[i];
+            shared_street_segments = find_street_segments(current, neighbor);
+            
+
+            fastest_street_segmentID = find_fastest_street_segment(shared_street_segments, current);
+            //weight = find_street_segment_travel_time(fastest_street_segmentID);
+            tentative_gScore = gScore[current] + find_street_segment_travel_time(fastest_street_segmentID);
+
+            //to check if a turn penalty needs to be added we need the previous street segment
+            //if current is the starting intersection, it wont have a prev segment
+
+            if (turn_penalty != 0 && current != intersect_id_start) {
+                prev_intersection = cameFrom[current];
+                previous_street_segments = find_street_segments(prev_intersection, current);
+                prev_street_segment = find_fastest_street_segment(previous_street_segments, prev_intersection);
+                prev_street_segment = mapInfo.street_segment_info[prev_street_segment].streetID;
+                streetID1 = mapInfo.street_segment_info[fastest_street_segmentID].streetID;
+                if (prev_street_segment != streetID1)
+                    tentative_gScore += turn_penalty;
+                
+            }
+            
+            
+            if (gScore[neighbor] == INF) {
+                gScore[neighbor] = tentative_gScore;
+                fScore[neighbor] = tentative_gScore
+                + heuristic_cost_estimate(neighbor, intersect_id_end);
+                openSet.push(Node(fScore[neighbor], neighbor));
+                cameFrom[neighbor] = current;
+            } 
+            else if (tentative_gScore >= gScore[neighbor])
+                continue;
+            else{
+                gScore[neighbor] = tentative_gScore;
+                fScore[neighbor] = gScore[neighbor]
+                 + heuristic_cost_estimate(neighbor, intersect_id_end);
+                openSet.push(Node(fScore[neighbor], neighbor));
+                cameFrom[neighbor] = current;
+            }
+
+        }
+    }
+    return empty_vector;
+}
+
+
+/*******************************************/
+/*       FIND PATH TO POI                  */
+
+/*******************************************/
+
+std::vector<unsigned> find_path_to_point_of_interest(const unsigned intersect_id_start, const std::string point_of_interest_name, const double turn_penalty) {
+    // store a vector of all the pois matching the requested name
+    std::vector<unsigned> result_n = find_pois_from_name(point_of_interest_name);
+
+    // if none are found, return
+    if (result_n.size() == 0) {
+        return result_n;
+    }
+    if (result_n.size() == 1) {
+        return find_path_between_intersections(intersect_id_start,
+        find_closest_intersection(mapInfo.poi_position[result_n[0]]),
+        turn_penalty);
+    }
+
+    
+    // calculate the closest point of interest from the found list to the starting point
+    double closest[5];
+    unsigned closestPoint[5];
+    
+    for (int i = 0; i < 5; i++){
+        closest[i] = INF;
+        closestPoint[i] = INF;
+    }
+    //= result_n[0], closestPoint1 = result_n[1];
+    
+    double length;
+    int dex;
+    bool replaced;
+    for (unsigned i = 0; i < result_n.size(); i++) {
+        length = find_distance_between_two_points(mapInfo.intersection_position[intersect_id_start], mapInfo.poi_position[result_n[i]]);
+        dex = 0;
+        replaced = false;
+        while (dex < 5 || !replaced){
+            
+            if (INF == closest[i] ){
+                closest[i] = length;
+                closestPoint[i] = result_n[i];
+                replaced = true;
+            }
+            dex++;
+        }
+        dex = 0;
+        while (dex < 5 || !replaced){
+            
+            if (length < closest[i] ){
+                closest[i] = length;
+                closestPoint[i] = result_n[i];
+                replaced = true;
+            }
+            dex++;
+        }
+        
+    }
+    if (closest[0] == INF)
+        std::cout<<"I DIE EVERYTIME\n";
+
+    unsigned intersect_id_end;
+    std::vector<unsigned> seq;
+    std::vector<unsigned> out;
+    out = find_path_between_intersections(intersect_id_start,
+            find_closest_intersection(mapInfo.poi_position[closestPoint[0]]),
+            turn_penalty);
+    for (unsigned i = 1; i < 5; i++){
+        if (closest[i] != INF){
+            intersect_id_end = find_closest_intersection(mapInfo.poi_position[closestPoint[i]]);
+            seq = find_path_between_intersections(intersect_id_start,
+            intersect_id_end,
+            turn_penalty);
+            if (compute_path_travel_time(seq, turn_penalty) < compute_path_travel_time(out, turn_penalty))
+                out = seq;
+        }
+        
+    }
+    
+
+    // calculate the path
+    
+    return seq;
+}
+
+
+/*
+vector<unsigned> find_path_to_point_of_interest(const unsigned intersect_id_start,
+        const std::string point_of_interest_name,
+        const double turn_penalty) {
+
+    priority_queue< Node, vector<Node>, Node_compare > openSet;
+
+    vector <double> gScore(mapInfo.interNum, INF);
+    vector <unsigned> cameFrom;
+    cameFrom.resize(mapInfo.interNum);
+    vector <double> fScore(mapInfo.interNum, INF);
+
+    gScore[intersect_id_start] = 0;
+    openSet.push( Node(0, intersect_id_start));
+
+    unsigned current, neighbor, fastest_street_segmentID, prev_intersection,
+            prev_street_segment, streetID1;
+    vector <unsigned> shared_street_segments, neighbors, previous_street_segments, empty_vector;
+    double tentative_gScore;
+
+    
+    vector <unsigned> POI_IDS = find_pois_from_name(point_of_interest_name);//mapInfo.POI_name_to_IDs[point_of_interest_name];
+    vector <unsigned> closest_intersections;
+    if (POI_IDS.size() < 1){
+        return empty_vector;
+    }
+    closest_intersections.resize(POI_IDS.size());
+    for (unsigned i = 0; i < POI_IDS.size(); i++) {
+        closest_intersections[i] = mapInfo.POIID_to_intersectionID[POI_IDS[i]];
+    }
+    
+   
+    while (!openSet.empty()) {
+        current = openSet.top().intersectionID;
+        //if (current == intersect_id_end)
+        //    return reconstruct_path(cameFrom, current, intersect_id_start);
+
+        openSet.pop();
+        
+        
+         
+        if (find(closest_intersections.begin(), closest_intersections.end(), current) != closest_intersections.end())
+            return reconstruct_path(cameFrom, current, intersect_id_start);
+        
+        neighbors = find_adjacent_intersections(current);
+        for (unsigned i = 0; i < neighbors.size(); i++) {
+            
+            neighbor = neighbors[i];
+            shared_street_segments = find_street_segments(current, neighbor);
+            
+
+            fastest_street_segmentID = find_fastest_street_segment(shared_street_segments, current);
+            //weight = find_street_segment_travel_time(fastest_street_segmentID);
+            tentative_gScore = gScore[current] + find_street_segment_travel_time(fastest_street_segmentID);
+
+            //to check if a turn penalty needs to be added we need the previous street segment
+            //if current is the starting intersection, it wont have a prev segment
+
+            if (turn_penalty != 0 && current != intersect_id_start) {
+                prev_intersection = cameFrom[current];
+                previous_street_segments = find_street_segments(prev_intersection, current);
+                prev_street_segment = find_fastest_street_segment(previous_street_segments, prev_intersection);
+                prev_street_segment = mapInfo.street_segment_info[prev_street_segment].streetID;
+                streetID1 = mapInfo.street_segment_info[fastest_street_segmentID].streetID;
+                if (prev_street_segment != streetID1)
+                    tentative_gScore += turn_penalty;
+                
+            }
+            
+            
+            if (gScore[neighbor] == INF) {
+                gScore[neighbor] = tentative_gScore;
+                //+ heuristic_cost_estimate(neighbor, intersect_id_end);
+                openSet.push(Node(fScore[neighbor], neighbor));
+                cameFrom[neighbor] = current;
+            } 
+            else if (tentative_gScore >= gScore[neighbor])
+                continue;
+            else{
+                gScore[neighbor] = tentative_gScore;
+                 //+ heuristic_cost_estimate(neighbor, intersect_id_end);
+                openSet.push(Node(fScore[neighbor], neighbor));
+                cameFrom[neighbor] = current;
+            }
+
+        }
+    }
+    return empty_vector;
+}
+
+
+/*vector<unsigned> find_path_to_point_of_interest(const unsigned intersect_id_start,
+        const std::string point_of_interest_name,
+        const double turn_penalty) {
+    priority_queue< Node, vector<Node>, Node_compare > openSet;
+    
+//    vector<unsigned> names = find_pois_from_name(point_of_interest_name);
+//    if (names.size() == 0){
+//        return names;
+//    }
+    
+
+    vector <double> gScore(getNumberOfIntersections(), INF);
+    vector <unsigned> cameFrom;
+    cameFrom.resize(getNumberOfIntersections());
+    vector <bool> closedSet(getNumberOfIntersections(), false);
+    vector <double> fScore(getNumberOfIntersections(), INF);
+
+    gScore[intersect_id_start] = 0;
+    fScore[intersect_id_start] = gScore[intersect_id_start];
+    openSet.push(Node(fScore[intersect_id_start], intersect_id_start));
+
+    unsigned current, neighbor, fastest_street_segmentID, prev_intersection,
+            prev_street_segment, streetID1, streetID2;
+    vector <unsigned> shared_street_segments, previous_street_segments, empty_vector, adjacent_intersections;
+    double weight, tentative_gScore;
+    bool found;
+    
+
+    while (!openSet.empty()) {
+        current = openSet.top().intersectionID;
+        openSet.pop();
+        found = found_POI(current, point_of_interest_name);
+        if (found)
+            return reconstruct_path(cameFrom, current, intersect_id_start);
+        closedSet[current] = true;
+
+        adjacent_intersections = find_adjacent_intersections(current);
+        for (unsigned i = 0; i < adjacent_intersections.size(); i++) {
+            neighbor = adjacent_intersections[i];
+            shared_street_segments = find_street_segments(current, neighbor);
+            
+            if (closedSet[neighbor])
+            continue;
+
+            fastest_street_segmentID = find_fastest_street_segment(shared_street_segments, current);
+            weight = find_street_segment_travel_time(fastest_street_segmentID);
+            
+            tentative_gScore = gScore[current] + weight;
+
+            //to check if a turn penalty needs to be added we need the previous street segment
+            //if current is the starting intersection, it wont have a prev segment
+            if (turn_penalty != 0) {
+                if (current != intersect_id_start) {
+                    prev_intersection = cameFrom[current];
+                    previous_street_segments = find_street_segments(prev_intersection, current);
+                    prev_street_segment = find_fastest_street_segment(previous_street_segments, prev_intersection);
+                    if (mapInfo.street_segment_info[prev_street_segment].streetID != mapInfo.street_segment_info[fastest_street_segmentID].streetID)
+                        tentative_gScore += turn_penalty;
+                }
+            }
+
+
+            if (gScore[neighbor] == INF) {
+                gScore[neighbor] = tentative_gScore;
+                fScore[neighbor] = gScore[neighbor];
+                openSet.push(Node(fScore[neighbor], neighbor));
+                cameFrom[neighbor] = current;
+            } else if (tentative_gScore >= gScore[neighbor])
+                continue;
+            else {
+                gScore[neighbor] = tentative_gScore;
+                fScore[neighbor] = gScore[neighbor];
+                openSet.push(Node(fScore[neighbor], neighbor));
+                cameFrom[neighbor] = current;
+            }
+        }
+    }
+    return empty_vector;
+}
+*/

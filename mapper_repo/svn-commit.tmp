@@ -1,0 +1,9 @@
+
+--This line, and those below, will be ignored--
+
+M    mapper/libstreetmap/src/m3.cpp
+M    mapper/libstreetmap/src/m3.h
+M    mapper/nbproject/configurations.xml
+M    mapper/nbproject/private/Release.properties
+M    mapper/nbproject/private/configurations.xml
+M    mapper/nbproject/private/private.xml
